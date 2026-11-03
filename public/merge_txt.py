@@ -9,6 +9,13 @@
 
 Если в папке несколько файлов вида filename-(datetime).txt,
 то для слияния выбирается самый свежий (с наибольшей датой).
+
+Поддерживаемые форматы datetime в имени файла:
+  - Вечер_(04:13_03.11.2026).txt       → HH:MM_DD.MM.YYYY в скобках
+  - Вечер_(04:13 03.11.2026).txt       → HH:MM DD.MM.YYYY в скобках
+  - filename-20240115-143022.txt       → YYYYMMDD-HHMMSS
+  - filename-20240115.txt              → YYYYMMDD
+  - filename-2024-01-15.txt            → YYYY-MM-DD
 """
 
 import os
@@ -27,32 +34,27 @@ SEARCH_PATHS = [
 # Путь для сохранения результата
 OUTPUT_DIR = Path("/home/smirnov/Documents/AI/Нулевой/Библия")
 
-# Regex для извлечения datetime из конца имени файла (перед расширением)
-# Поддерживает форматы:
-#   filename-20240115-143022.txt
-#   filename-20240115.txt
-#   filename-2024-01-15_14-30-22.txt
-#   filename-20240115_143022.txt
+# Regex-паттерны для извлечения datetime из имени файла (перед расширением)
+# Каждый паттерн: (regex, формат_даты)
 DATETIME_PATTERNS = [
+    # Основной формат: name_(HH:MM_DD.MM.YYYY)  — например: Вечер_(04:13_03.11.2026)
+    (re.compile(r"^(.+)_\((\d{2}:\d{2}_\d{2}\.\d{2}\.\d{4})\)$"), "%H:%M_%d.%m.%Y"),
+    # Вариант с пробелом: name_(HH:MM DD.MM.YYYY) — например: Вечер_(04:13 03.11.2026)
+    (re.compile(r"^(.+)_\((\d{2}:\d{2} \d{2}\.\d{2}\.\d{4})\)$"), "%H:%M %d.%m.%Y"),
+    # Вариант с точкой вместо _: name_(HH.MM_DD.MM.YYYY)
+    (re.compile(r"^(.+)_\((\d{2}\.\d{2}_\d{2}\.\d{2}\.\d{4})\)$"), "%H.%M_%d.%m.%Y"),
+    # Только дата в скобках: name_(DD.MM.YYYY)
+    (re.compile(r"^(.+)_\((\d{2}\.\d{2}\.\d{4})\)$"), "%d.%m.%Y"),
     # YYYYMMDD-HHMMSS
-    re.compile(r"^(.+)-(\d{8}-\d{6})$"),
+    (re.compile(r"^(.+)-(\d{8}-\d{6})$"), "%Y%m%d-%H%M%S"),
     # YYYYMMDD_HHMMSS
-    re.compile(r"^(.+)-(\d{8}_\d{6})$"),
+    (re.compile(r"^(.+)-(\d{8}_\d{6})$"), "%Y%m%d_%H%M%S"),
     # YYYY-MM-DD_HH-MM-SS
-    re.compile(r"^(.+)-(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})$"),
+    (re.compile(r"^(.+)-(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})$"), "%Y-%m-%d_%H-%M-%S"),
     # YYYYMMDD
-    re.compile(r"^(.+)-(\d{8})$"),
+    (re.compile(r"^(.+)-(\d{8})$"), "%Y%m%d"),
     # YYYY-MM-DD
-    re.compile(r"^(.+)-(\d{4}-\d{2}-\d{2})$"),
-]
-
-# Форматы для парсинга извлечённой datetime-строки
-DATETIME_FORMATS = [
-    "%Y%m%d-%H%M%S",
-    "%Y%m%d_%H%M%S",
-    "%Y-%m-%d_%H-%M-%S",
-    "%Y%m%d",
-    "%Y-%m-%d",
+    (re.compile(r"^(.+)-(\d{4}-\d{2}-\d{2})$"), "%Y-%m-%d"),
 ]
 
 
@@ -62,22 +64,18 @@ def parse_datetime_from_filename(filename: str) -> tuple[str, datetime | None]:
     Возвращает (base_name, parsed_datetime).
     Если datetime не найден, возвращает (полное_имя, None).
     """
-    # Убираем расширение .txt
     stem = Path(filename).stem
 
-    for pattern in DATETIME_PATTERNS:
+    for pattern, fmt in DATETIME_PATTERNS:
         match = pattern.match(stem)
         if match:
             base_name = match.group(1)
             dt_str = match.group(2)
-
-            # Пытаемся распарсить дату
-            for fmt in DATETIME_FORMATS:
-                try:
-                    parsed_dt = datetime.strptime(dt_str, fmt)
-                    return base_name, parsed_dt
-                except ValueError:
-                    continue
+            try:
+                parsed_dt = datetime.strptime(dt_str, fmt)
+                return base_name, parsed_dt
+            except ValueError:
+                continue
 
     # Если ни один паттерн не подошёл — считаем что datetime нет
     return stem, None
@@ -94,19 +92,17 @@ def find_txt_files(base_path: Path) -> list[Path]:
     return txt_files
 
 
-def select_newest_per_group(files: list[Path]) -> tuple[list[Path], dict[str, list[Path]]]:
+def select_newest_per_group(files: list[Path]) -> tuple[list[Path], dict[str, dict]]:
     """
     Группирует файлы по базовому имени (без datetime).
     Для каждой группы выбирает файл с самой свежей датой.
     Возвращает (список_выбранных, словарь_групп).
     """
-    # Группируем: base_name -> [(filepath, datetime), ...]
     groups: dict[str, list[tuple[Path, datetime | None]]] = defaultdict(list)
 
     for filepath in files:
         base_name, parsed_dt = parse_datetime_from_filename(filepath.name)
-        # Используем директорию + базовое имя как ключ группы,
-        # чтобы файлы из разных папок с одинаковым именем не смешивались
+        # Ключ группы: директория + базовое имя
         group_key = f"{filepath.parent}::{base_name}"
         groups[group_key].append((filepath, parsed_dt))
 
@@ -115,7 +111,6 @@ def select_newest_per_group(files: list[Path]) -> tuple[list[Path], dict[str, li
 
     for group_key, file_list in groups.items():
         if len(file_list) == 1:
-            # Один файл — берём его
             filepath, _ = file_list[0]
             selected.append(filepath)
         else:
@@ -128,10 +123,10 @@ def select_newest_per_group(files: list[Path]) -> tuple[list[Path], dict[str, li
             newest = file_list[0][0]
             selected.append(newest)
 
-            # Логируем, какие файлы были отброшены
             group_details[group_key] = {
                 "selected": newest,
-                "skipped": [f for f, _ in file_list[1:]],
+                "selected_dt": file_list[0][1],
+                "skipped": [(f, dt) for f, dt in file_list[1:]],
             }
 
     selected.sort()
@@ -142,15 +137,12 @@ def merge_files(files: list[Path], output_path: Path) -> None:
     """Объединяет содержимое всех файлов в один выходной файл."""
     with open(output_path, "w", encoding="utf-8") as outfile:
         for i, filepath in enumerate(files):
-            # Добавляем разделитель между файлами
             if i > 0:
                 outfile.write("\n" + "=" * 60 + "\n\n")
 
-            # Записываем имя файла как заголовок
             outfile.write(f"--- {filepath.name} ---\n")
             outfile.write(f"--- Путь: {filepath} ---\n\n")
 
-            # Читаем и записываем содержимое
             try:
                 with open(filepath, "r", encoding="utf-8") as infile:
                     content = infile.read()
@@ -192,10 +184,12 @@ def main():
         print(f"\n   ⚡ Обнаружено {len(group_details)} групп(а) с несколькими версиями:")
         for group_key, details in group_details.items():
             base = group_key.split("::")[-1]
+            dt_str = details["selected_dt"].strftime("%d.%m.%Y %H:%M") if details["selected_dt"] else "без даты"
             print(f"\n   📌 Группа «{base}»:")
-            print(f"      ✅ Выбран: {details['selected'].name}")
-            for skipped in details["skipped"]:
-                print(f"      ⏭️  Пропущен: {skipped.name}")
+            print(f"      ✅ Выбран: {details['selected'].name}  ({dt_str})")
+            for skipped, skipped_dt in details["skipped"]:
+                skipped_dt_str = skipped_dt.strftime("%d.%m.%Y %H:%M") if skipped_dt else "без даты"
+                print(f"      ⏭️  Пропущен: {skipped.name}  ({skipped_dt_str})")
     else:
         print("   ℹ️  Дубликатов не обнаружено.")
 
