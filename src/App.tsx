@@ -7,7 +7,7 @@ const pythonCode = `#!/usr/bin/env python3
   - /home/smirnov/Documents/AI/Нулевой/Референсы
   - /home/smirnov/Documents/AI/Нулевой/Novells
 И сохраняет результат в:
-  - /home/smirnov/Documents/AI/Нулевой/Библия/bibl-[datetime].txt
+  - /home/smirnov/Documents/AI/Нулевой/Библия/bibl.txt
 
 Если в папке несколько файлов вида filename-(datetime).txt,
 то для слияния выбирается самый свежий (с наибольшей датой).
@@ -203,9 +203,8 @@ def main():
     # Создаём директорию для вывода
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Формируем имя выходного файла с датой и временем
-    datetime_str = datetime.now().strftime("%Y%m%d-%H%M%S")
-    output_filename = f"bibl-{datetime_str}.txt"
+    # Имя выходного файла
+    output_filename = "bibl.txt"
     output_path = OUTPUT_DIR / output_filename
 
     print(f"\\n📝 Объединение файлов...")
@@ -271,7 +270,7 @@ function App() {
                 .../Нулевой/Библия/
               </div>
               <div className="font-mono text-xs bg-slate-900/50 px-2 py-1 rounded mt-1">
-                bibl-YYYYMMDD-HHMMSS.txt
+                bibl.txt
               </div>
             </div>
           </div>
@@ -351,7 +350,7 @@ function App() {
         {/* Footer */}
         <div className="mt-8 text-center text-gray-500 text-sm">
           <p>Скрипт создаёт разделители между файлами и заголовки с путями</p>
-          <p className="mt-1">Имя файла содержит дату и время создания</p>
+          <p className="mt-1">Итоговый файл: bibl.txt</p>
         </div>
       </div>
     </div>
