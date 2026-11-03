@@ -7,8 +7,9 @@
 И сохраняет результат в:
   - /home/smirnov/Documents/AI/Нулевой/Библия/bibl.txt
 
-Если в папке несколько файлов вида filename-(datetime).txt,
-то для слияния выбирается самый свежий (с наибольшей датой).
+Если в папке есть файлы filename.txt и filename_(datetime).txt,
+то приоритет отдаётся файлу с datetime в имени (выбирается самый свежий).
+Если все файлы одной группы без datetime — берётся единственный.
 
 Поддерживаемые форматы datetime в имени файла:
   - Вечер_(04:13_03.11.2026).txt       → HH:MM_DD.MM.YYYY в скобках
@@ -114,19 +115,29 @@ def select_newest_per_group(files: list[Path]) -> tuple[list[Path], dict[str, di
             filepath, _ = file_list[0]
             selected.append(filepath)
         else:
-            # Несколько файлов — выбираем самый свежий
-            # Файлы без даты считаем самыми старыми
-            file_list.sort(
-                key=lambda x: x[1] if x[1] is not None else datetime.min,
-                reverse=True,
-            )
-            newest = file_list[0][0]
-            selected.append(newest)
+            # Разделяем файлы на "с датой" и "без даты"
+            with_dt = [(f, dt) for f, dt in file_list if dt is not None]
+            without_dt = [(f, dt) for f, dt in file_list if dt is None]
+
+            if with_dt:
+                # Приоритет у файлов с datetime — выбираем самый свежий из них
+                with_dt.sort(key=lambda x: x[1], reverse=True)
+                newest = with_dt[0][0]
+                selected.append(newest)
+                # Все остальные (и с датой, и без) идут в skipped
+                skipped = with_dt[1:] + without_dt
+            else:
+                # Файлов с датой нет — берём единственный без даты
+                newest = without_dt[0][0]
+                selected.append(newest)
+                skipped = without_dt[1:]
 
             group_details[group_key] = {
                 "selected": newest,
-                "selected_dt": file_list[0][1],
-                "skipped": [(f, dt) for f, dt in file_list[1:]],
+                "selected_dt": (
+                    next((dt for f, dt in file_list if f == newest and dt is not None), None)
+                ),
+                "skipped": skipped,
             }
 
     selected.sort()
@@ -201,8 +212,9 @@ def main():
     # Создаём директорию для вывода
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Имя выходного файла
-    output_filename = "bibl.txt"
+    # Формируем имя выходного файла с датой и временем
+    datetime_str = datetime.now().strftime("%Y%m%d-%H%M%S")
+    output_filename = f"bibl-{datetime_str}.txt"
     output_path = OUTPUT_DIR / output_filename
 
     print(f"\n📝 Объединение файлов...")
