@@ -1,15 +1,41 @@
 #!/usr/bin/env python3
 """
 Скрипт для объединения всех .md файлов из подпапок в единый файл.
-Ищет файлы в:
+
+Запуск:
+  python merge_txt.py [--help] [папка1 папка2 ...]
+Пути к папкам с исходными файлами передаются позиционными аргументами
+(без ключей). Флаг --help (-h) печатает справку и выходит.
+Если аргументы не переданы, используются пути по умолчанию:
   - /home/smirnov/Documents/AI/Нулевой/Референсы
   - /home/smirnov/Documents/AI/Нулевой/Novells
-И сохраняет результат в:
-  - /home/smirnov/Documents/AI/Нулевой/Библия/bibl-[datetime].md
+
+Результат сохраняется в:
+  - <выходная_директория>/bibl-[YYYYMMDD-HHMMSS].md
+
+Выходная директория определяется так:
+  - Если передана ровно ОДНА папка-аргумент — результат кладётся в корень
+    этой папки.
+  - Если аргументов несколько или они не переданы — используется OUTPUT_DIR
+    (по умолчанию /home/smirnov/Documents/AI/Нулевой/Библия, можно
+    переопределить переменной окружения MERGE_OUTPUT_DIR).
+Файлы внутри выходной директории из выборки исключаются.
+
+Кодировки:
+  - Входные файлы читаются с автоопределением: сначала UTF-8 (в т.ч. с BOM),
+    затем cp1251 (Windows-1251). Непрочитываемые файлы помечаются в выводе
+    как ошибка чтения, но не прерывают слияние.
+  - Выходной файл всегда записывается в UTF-8 (без BOM); артефакты U+FEFF
+    из входного текста удаляются.
+  - Кириллица полностью поддерживается в именах файлов/папок и в содержимом.
 
 Исключает из выборки:
   - Папки и файлы, начинающиеся с "_"
   - Файлы и папки, содержащие "draft" в названии (без учёта регистра)
+  - Пути строго внутри выходной директории и выходные файлы bibl-*.md
+    из её корня (чтобы не подхватить результаты предыдущих запусков;
+    при этом сама папка-аргумент, являющаяся выходной директорией,
+    сканируется нормально)
 
 Если в папке есть файлы filename.md и filename_(datetime).md,
 то приоритет отдаётся файлу с datetime в имени (выбирается самый свежий).
@@ -18,26 +44,99 @@
 Поддерживаемые форматы datetime в имени файла:
   - Вечер_(04:13_03.11.2026).md       → HH:MM_DD.MM.YYYY в скобках
   - Вечер_(04:13 03.11.2026).md       → HH:MM DD.MM.YYYY в скобках
+  - Вечер_(04.13_03.11.2026).md       → HH.MM_DD.MM.YYYY в скобках
+  - Вечер_(03.11.2026).md             → только дата DD.MM.YYYY в скобках
   - filename-20240115-143022.md       → YYYYMMDD-HHMMSS
+  - filename-20240115_143022.md       → YYYYMMDD_HHMMSS
+  - filename-2024-01-15_14-30-22.md   → YYYY-MM-DD_HH-MM-SS
   - filename-20240115.md              → YYYYMMDD
   - filename-2024-01-15.md            → YYYY-MM-DD
 """
 
+import sys
 import os
 import re
+import argparse
 from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
 
+# Кодировки для чтения входных файлов (пробуются по порядку).
+# utf-8-sig — сначала, чтобы корректно снимать BOM с UTF-8 файлов;
+# cp1251 (Windows-1251) — совместимость с файлами в старой кириллической кодировке.
+INPUT_ENCODINGS = ["utf-8-sig", "cp1251"]
 
-# Пути для поиска файлов
-SEARCH_PATHS = [
+
+def read_text_file(filepath: Path) -> tuple[str, str]:
+    """
+    Читает текстовый файл, пробуя кодировки из INPUT_ENCODINGS по порядку.
+    Возвращает (содержимое, использованная_кодировка).
+    Если ни одна кодировка не подошла — raises UnicodeDecodeError последней попытки.
+    """
+    last_error: UnicodeDecodeError | None = None
+    for enc in INPUT_ENCODINGS:
+        try:
+            with open(filepath, "r", encoding=enc) as infile:
+                content = infile.read()
+            # Подстраховка: если файл был в UTF-8 без BOM, но содержал U+FEFF
+            # внутри текста (артефакт двойной конвертации) — убираем его.
+            return content.replace("\ufeff", ""), enc
+        except UnicodeDecodeError as e:
+            last_error = e
+    raise last_error
+
+
+# Пути для поиска файлов (по умолчанию).
+# Можно передать пути папок с исходными файлами аргументами командной строки:
+#   python merge_txt.py /path/to/folder1 /path/to/folder2 ...
+DEFAULT_SEARCH_PATHS = [
     Path("/home/smirnov/Documents/AI/Нулевой/Референсы"),
     Path("/home/smirnov/Documents/AI/Нулевой/Novells"),
 ]
 
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Создаёт парсер аргументов командной строки (поддержка --help)."""
+    parser = argparse.ArgumentParser(
+        prog="merge_txt.py",
+        description=(
+            "Объединяет все .md файлы из подпапок указанных директорий "
+            "в единый файл bibl-[YYYYMMDD-HHMMSS].md."
+        ),
+        epilog=(
+            "Если папки не указаны, используются пути по умолчанию: "
+            + ", ".join(str(p) for p in DEFAULT_SEARCH_PATHS)
+            + ". Если передана ровно одна папка, результат кладётся в её корень; "
+            "иначе — в выходную директорию (переменная окружения MERGE_OUTPUT_DIR "
+            "или путь по умолчанию). Входные файлы читаются в UTF-8 (в т.ч. с BOM) "
+            "или cp1251, результат всегда записывается в UTF-8."
+        ),
+    )
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        metavar="ПАПКА",
+        help="пути к папкам с исходными .md файлами (без ключей, можно несколько)",
+    )
+    return parser
+
+
+def get_search_paths(argv: list[str] | None = None) -> list[Path]:
+    """
+    Возвращает пути для поиска: из аргументов командной строки или по умолчанию.
+    Флаг --help печатает справку и завершает программу (exit 0).
+    """
+    argv = sys.argv[1:] if argv is None else argv
+    raw_paths = build_arg_parser().parse_args(argv).paths
+    args = [a.strip() for a in raw_paths if a.strip()]
+    if args:
+        return [Path(a) for a in args]
+    return DEFAULT_SEARCH_PATHS
+
+
 # Путь для сохранения результата
-OUTPUT_DIR = Path("/home/smirnov/Documents/AI/Нулевой/Библия")
+# (можно переопределить переменной окружения MERGE_OUTPUT_DIR)
+OUTPUT_DIR = Path(os.environ.get("MERGE_OUTPUT_DIR", "/home/smirnov/Documents/AI/Нулевой/Библия"))
 
 # Regex-паттерны для извлечения datetime из имени файла (перед расширением)
 # Каждый паттерн: (regex, формат_даты)
@@ -180,7 +279,9 @@ def select_newest_per_group(files: list[Path]) -> tuple[list[Path], dict[str, di
 
 
 def merge_files(files: list[Path], output_path: Path) -> None:
-    """Объединяет содержимое всех файлов в один выходной файл в формате Markdown."""
+    """Объединяет содержимое всех файлов в один выходной файл в формате Markdown.
+    Входные файлы читаются с автоопределением кодировки (UTF-8 / UTF-8+BOM / cp1251),
+    результат всегда записывается в UTF-8."""
     with open(output_path, "w", encoding="utf-8") as outfile:
         for i, filepath in enumerate(files):
             if i > 0:
@@ -190,25 +291,71 @@ def merge_files(files: list[Path], output_path: Path) -> None:
             outfile.write(f"*Путь: `{filepath}`*\n\n")
 
             try:
-                with open(filepath, "r", encoding="utf-8") as infile:
-                    content = infile.read()
-                    outfile.write(content)
-                    if content and not content.endswith("\n"):
-                        outfile.write("\n")
+                content, used_enc = read_text_file(filepath)
+                if used_enc != "utf-8-sig":
+                    print(f"  🔤 {filepath.name}: прочитано в кодировке {used_enc}")
+                outfile.write(content)
+                if content and not content.endswith("\n"):
+                    outfile.write("\n")
             except Exception as e:
                 outfile.write(f"\n> ⚠️ **ОШИБКА ЧТЕНИЯ ФАЙЛА:** {e}\n")
                 print(f"  ❌ Ошибка чтения: {filepath} — {e}")
 
 
+def is_under_output_dir(path: Path, output_dir: Path | None = None) -> bool:
+    """
+    Проверяет, находится ли путь СТРОГО внутри выходной директории.
+    Сама выходная директория (совпадающий путь) возвращает False — иначе при
+    выводе результата в корень папки-аргумента эта папка ошибочно исключалась
+    бы из выборки.
+    """
+    out_dir = OUTPUT_DIR if output_dir is None else output_dir
+    try:
+        p, o = path.resolve(), out_dir.resolve()
+        return p != o and o in p.parents
+    except OSError:
+        return False
+
+
+def is_output_file(path: Path, output_dir: Path | None = None) -> bool:
+    """Проверяет, является ли файл результатом предыдущих запусков (bibl-*.md в корне выходной директории)."""
+    out_dir = OUTPUT_DIR if output_dir is None else output_dir
+    try:
+        rel = path.resolve().relative_to(out_dir.resolve())
+    except (ValueError, OSError):
+        return False
+    return len(rel.parts) == 1 and rel.name.startswith("bibl-") and rel.suffix == ".md"
+
+
 def main():
+    search_paths = get_search_paths()
+
+    # Если передана ровно одна папка-аргумент — результат кладётся в её корень.
+    # Иначе используется OUTPUT_DIR (MERGE_OUTPUT_DIR или путь по умолчанию).
+    args_provided = bool(build_arg_parser().parse_args(sys.argv[1:]).paths)
+    if args_provided and len(search_paths) == 1:
+        output_dir = search_paths[0]
+    else:
+        output_dir = OUTPUT_DIR
+
+    # Выходная директория может находиться внутри одной из папок поиска —
+    # исключаем такие пути, чтобы не подхватить собственные bibl-*.md файлы
+    filtered_paths = []
+    for p in search_paths:
+        if is_under_output_dir(p, output_dir):
+            print(f"⏭️  Пропуск пути (внутри выходной директории): {p}")
+        else:
+            filtered_paths.append(p)
+    search_paths = filtered_paths
+
     print("🔍 Поиск .md файлов...")
     print("=" * 50)
 
     all_files = []
 
-    for search_path in SEARCH_PATHS:
+    for search_path in search_paths:
         print(f"\n📂 Сканирование: {search_path}")
-        files = find_md_files(search_path)
+        files = [f for f in find_md_files(search_path) if not is_output_file(f, output_dir)]
         print(f"   Найдено файлов: {len(files)}")
         for f in files:
             print(f"   📄 {f.relative_to(search_path)}")
@@ -245,12 +392,12 @@ def main():
         print(f"   🗑️  Пропущено (устаревшие версии): {skipped_count}")
 
     # Создаём директорию для вывода
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # Формируем имя выходного файла с датой и временем
     datetime_str = datetime.now().strftime("%Y%m%d-%H%M%S")
     output_filename = f"bibl-{datetime_str}.md"
-    output_path = OUTPUT_DIR / output_filename
+    output_path = output_dir / output_filename
 
     print(f"\n📝 Объединение файлов...")
     print(f"📁 Выходной файл: {output_path}")
