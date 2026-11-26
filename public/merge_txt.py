@@ -30,6 +30,30 @@ from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
 
+# Кодировки для чтения входных файлов (пробуются по порядку).
+# utf-8-sig — сначала, чтобы корректно снимать BOM с UTF-8 файлов;
+# cp1251 (Windows-1251) — совместимость с файлами в старой кириллической кодировке.
+INPUT_ENCODINGS = ["utf-8-sig", "cp1251"]
+
+
+def read_text_file(filepath: Path) -> tuple[str, str]:
+    """
+    Читает текстовый файл, пробуя кодировки из INPUT_ENCODINGS по порядку.
+    Возвращает (содержимое, использованная_кодировка).
+    Если ни одна кодировка не подошла — raises UnicodeDecodeError последней попытки.
+    """
+    last_error: UnicodeDecodeError | None = None
+    for enc in INPUT_ENCODINGS:
+        try:
+            with open(filepath, "r", encoding=enc) as infile:
+                content = infile.read()
+            # Подстраховка: если файл был в UTF-8 без BOM, но содержал U+FEFF
+            # внутри текста (артефакт двойной конвертации) — убираем его.
+            return content.replace("\ufeff", ""), enc
+        except UnicodeDecodeError as e:
+            last_error = e
+    raise last_error
+
 
 # Пути для поиска файлов (по умолчанию).
 # Можно передать пути папок с исходными файлами аргументами командной строки:
@@ -49,7 +73,8 @@ def get_search_paths() -> list[Path]:
 
 
 # Путь для сохранения результата
-OUTPUT_DIR = Path("/home/smirnov/Documents/AI/Нулевой/Библия")
+# (можно переопределить переменной окружения MERGE_OUTPUT_DIR)
+OUTPUT_DIR = Path(os.environ.get("MERGE_OUTPUT_DIR", "/home/smirnov/Documents/AI/Нулевой/Библия"))
 
 # Regex-паттерны для извлечения datetime из имени файла (перед расширением)
 # Каждый паттерн: (regex, формат_даты)
@@ -192,7 +217,9 @@ def select_newest_per_group(files: list[Path]) -> tuple[list[Path], dict[str, di
 
 
 def merge_files(files: list[Path], output_path: Path) -> None:
-    """Объединяет содержимое всех файлов в один выходной файл в формате Markdown."""
+    """Объединяет содержимое всех файлов в один выходной файл в формате Markdown.
+    Входные файлы читаются с автоопределением кодировки (UTF-8 / UTF-8+BOM / cp1251),
+    результат всегда записывается в UTF-8."""
     with open(output_path, "w", encoding="utf-8") as outfile:
         for i, filepath in enumerate(files):
             if i > 0:
@@ -202,11 +229,12 @@ def merge_files(files: list[Path], output_path: Path) -> None:
             outfile.write(f"*Путь: `{filepath}`*\n\n")
 
             try:
-                with open(filepath, "r", encoding="utf-8") as infile:
-                    content = infile.read()
-                    outfile.write(content)
-                    if content and not content.endswith("\n"):
-                        outfile.write("\n")
+                content, used_enc = read_text_file(filepath)
+                if used_enc != "utf-8-sig":
+                    print(f"  🔤 {filepath.name}: прочитано в кодировке {used_enc}")
+                outfile.write(content)
+                if content and not content.endswith("\n"):
+                    outfile.write("\n")
             except Exception as e:
                 outfile.write(f"\n> ⚠️ **ОШИБКА ЧТЕНИЯ ФАЙЛА:** {e}\n")
                 print(f"  ❌ Ошибка чтения: {filepath} — {e}")
