@@ -23,6 +23,7 @@
   - filename-2024-01-15.md            → YYYY-MM-DD
 """
 
+import sys
 import os
 import re
 from datetime import datetime
@@ -30,11 +31,22 @@ from pathlib import Path
 from collections import defaultdict
 
 
-# Пути для поиска файлов
-SEARCH_PATHS = [
+# Пути для поиска файлов (по умолчанию).
+# Можно передать пути папок с исходными файлами аргументами командной строки:
+#   python merge_txt.py /path/to/folder1 /path/to/folder2 ...
+DEFAULT_SEARCH_PATHS = [
     Path("/home/smirnov/Documents/AI/Нулевой/Референсы"),
     Path("/home/smirnov/Documents/AI/Нулевой/Novells"),
 ]
+
+
+def get_search_paths() -> list[Path]:
+    """Возвращает пути для поиска: из аргументов командной строки или по умолчанию."""
+    args = [a for a in sys.argv[1:] if a.strip()]
+    if args:
+        return [Path(a) for a in args]
+    return DEFAULT_SEARCH_PATHS
+
 
 # Путь для сохранения результата
 OUTPUT_DIR = Path("/home/smirnov/Documents/AI/Нулевой/Библия")
@@ -201,12 +213,14 @@ def merge_files(files: list[Path], output_path: Path) -> None:
 
 
 def main():
+    search_paths = get_search_paths()
+
     print("🔍 Поиск .md файлов...")
     print("=" * 50)
 
     all_files = []
 
-    for search_path in SEARCH_PATHS:
+    for search_path in search_paths:
         print(f"\n📂 Сканирование: {search_path}")
         files = find_md_files(search_path)
         print(f"   Найдено файлов: {len(files)}")
