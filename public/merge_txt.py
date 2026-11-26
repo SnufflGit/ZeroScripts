@@ -5,7 +5,7 @@
   - /home/smirnov/Documents/AI/Нулевой/Референсы
   - /home/smirnov/Documents/AI/Нулевой/Novells
 И сохраняет результат в:
-  - /home/smirnov/Documents/AI/Нулевой/Библия/bibl-[datetime].txt
+  - /home/smirnov/Documents/AI/Нулевой/Библия/bibl-[datetime].md
 
 Исключает из выборки:
   - Папки и файлы, начинающиеся с "_"
@@ -180,14 +180,14 @@ def select_newest_per_group(files: list[Path]) -> tuple[list[Path], dict[str, di
 
 
 def merge_files(files: list[Path], output_path: Path) -> None:
-    """Объединяет содержимое всех файлов в один выходной файл."""
+    """Объединяет содержимое всех файлов в один выходной файл в формате Markdown."""
     with open(output_path, "w", encoding="utf-8") as outfile:
         for i, filepath in enumerate(files):
             if i > 0:
-                outfile.write("\n" + "=" * 60 + "\n\n")
+                outfile.write("\n---\n\n")
 
-            outfile.write(f"--- {filepath.name} ---\n")
-            outfile.write(f"--- Путь: {filepath} ---\n\n")
+            outfile.write(f"# {filepath.name}\n\n")
+            outfile.write(f"*Путь: `{filepath}`*\n\n")
 
             try:
                 with open(filepath, "r", encoding="utf-8") as infile:
@@ -196,7 +196,7 @@ def merge_files(files: list[Path], output_path: Path) -> None:
                     if content and not content.endswith("\n"):
                         outfile.write("\n")
             except Exception as e:
-                outfile.write(f"\n[ОШИБКА ЧТЕНИЯ ФАЙЛА: {e}]\n")
+                outfile.write(f"\n> ⚠️ **ОШИБКА ЧТЕНИЯ ФАЙЛА:** {e}\n")
                 print(f"  ❌ Ошибка чтения: {filepath} — {e}")
 
 
@@ -249,7 +249,7 @@ def main():
 
     # Формируем имя выходного файла с датой и временем
     datetime_str = datetime.now().strftime("%Y%m%d-%H%M%S")
-    output_filename = f"bibl-{datetime_str}.txt"
+    output_filename = f"bibl-{datetime_str}.md"
     output_path = OUTPUT_DIR / output_filename
 
     print(f"\n📝 Объединение файлов...")
