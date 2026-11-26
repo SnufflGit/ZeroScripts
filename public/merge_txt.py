@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
 """
-Скрипт для объединения всех .txt файлов из подпапок в единый файл.
+Скрипт для объединения всех .md файлов из подпапок в единый файл.
 Ищет файлы в:
   - /home/smirnov/Documents/AI/Нулевой/Референсы
   - /home/smirnov/Documents/AI/Нулевой/Novells
 И сохраняет результат в:
-  - /home/smirnov/Documents/AI/Нулевой/Библия/bibl.txt
+  - /home/smirnov/Documents/AI/Нулевой/Библия/bibl-[datetime].txt
 
-Если в папке есть файлы filename.txt и filename_(datetime).txt,
+Исключает из выборки:
+  - Папки и файлы, начинающиеся с "_"
+  - Файлы и папки, содержащие "draft" в названии (без учёта регистра)
+
+Если в папке есть файлы filename.md и filename_(datetime).md,
 то приоритет отдаётся файлу с datetime в имени (выбирается самый свежий).
 Если все файлы одной группы без datetime — берётся единственный.
 
 Поддерживаемые форматы datetime в имени файла:
-  - Вечер_(04:13_03.11.2026).txt       → HH:MM_DD.MM.YYYY в скобках
-  - Вечер_(04:13 03.11.2026).txt       → HH:MM DD.MM.YYYY в скобках
-  - filename-20240115-143022.txt       → YYYYMMDD-HHMMSS
-  - filename-20240115.txt              → YYYYMMDD
-  - filename-2024-01-15.txt            → YYYY-MM-DD
+  - Вечер_(04:13_03.11.2026).md       → HH:MM_DD.MM.YYYY в скобках
+  - Вечер_(04:13 03.11.2026).md       → HH:MM DD.MM.YYYY в скобках
+  - filename-20240115-143022.md       → YYYYMMDD-HHMMSS
+  - filename-20240115.md              → YYYYMMDD
+  - filename-2024-01-15.md            → YYYY-MM-DD
 """
 
 import os
@@ -59,6 +63,21 @@ DATETIME_PATTERNS = [
 ]
 
 
+def should_exclude(path: Path) -> bool:
+    """
+    Проверяет, должен ли файл/папка быть исключён из выборки.
+    Исключаются:
+      - Любые компоненты пути, начинающиеся с "_"
+      - Любые компоненты пути, содержащие "draft" (без учёта регистра)
+    """
+    for part in path.parts:
+        if part.startswith("_"):
+            return True
+        if "draft" in part.lower():
+            return True
+    return False
+
+
 def parse_datetime_from_filename(filename: str) -> tuple[str, datetime | None]:
     """
     Извлекает базовое имя и datetime из имени файла.
@@ -82,21 +101,37 @@ def parse_datetime_from_filename(filename: str) -> tuple[str, datetime | None]:
     return stem, None
 
 
-def find_txt_files(base_path: Path) -> list[Path]:
-    """Рекурсивно находит все .txt файлы в подпапках указанной директории."""
+def find_md_files(base_path: Path) -> list[Path]:
+    """Рекурсивно находит все .md файлы в подпапках указанной директории."""
     if not base_path.exists():
         print(f"⚠️  Директория не найдена: {base_path}")
         return []
 
-    txt_files = list(base_path.rglob("*.txt"))
-    txt_files.sort()
-    return txt_files
+    all_md_files = list(base_path.rglob("*.md"))
+    
+    # Фильтрация: исключаем файлы из папок с "_" или "draft"
+    filtered_files = []
+    excluded_count = 0
+    for filepath in all_md_files:
+        # Проверяем относительный путь от базовой директории
+        rel_path = filepath.relative_to(base_path)
+        if should_exclude(rel_path):
+            excluded_count += 1
+        else:
+            filtered_files.append(filepath)
+    
+    if excluded_count > 0:
+        print(f"   🚫 Исключено файлов (папки с '_' или 'draft'): {excluded_count}")
+    
+    filtered_files.sort()
+    return filtered_files
 
 
 def select_newest_per_group(files: list[Path]) -> tuple[list[Path], dict[str, dict]]:
     """
     Группирует файлы по базовому имени (без datetime).
     Для каждой группы выбирает файл с самой свежей датой.
+    Приоритет у файлов с datetime в имени.
     Возвращает (список_выбранных, словарь_групп).
     """
     groups: dict[str, list[tuple[Path, datetime | None]]] = defaultdict(list)
@@ -166,21 +201,21 @@ def merge_files(files: list[Path], output_path: Path) -> None:
 
 
 def main():
-    print("🔍 Поиск .txt файлов...")
+    print("🔍 Поиск .md файлов...")
     print("=" * 50)
 
     all_files = []
 
     for search_path in SEARCH_PATHS:
         print(f"\n📂 Сканирование: {search_path}")
-        files = find_txt_files(search_path)
+        files = find_md_files(search_path)
         print(f"   Найдено файлов: {len(files)}")
         for f in files:
             print(f"   📄 {f.relative_to(search_path)}")
         all_files.extend(files)
 
     print(f"\n{'=' * 50}")
-    print(f"📊 Всего найдено .txt файлов: {len(all_files)}")
+    print(f"📊 Всего найдено .md файлов: {len(all_files)}")
 
     if not all_files:
         print("❌ Файлы не найдены. Нечего объединять.")
