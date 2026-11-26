@@ -10,10 +10,15 @@
   - /home/smirnov/Documents/AI/Нулевой/Novells
 
 Результат сохраняется в:
-  - <OUTPUT_DIR>/bibl-[YYYYMMDD-HHMMSS].md
-где OUTPUT_DIR по умолчанию:
-  - /home/smirnov/Documents/AI/Нулевой/Библия
-(можно переопределить переменной окружения MERGE_OUTPUT_DIR)
+  - <выходная_директория>/bibl-[YYYYMMDD-HHMMSS].md
+
+Выходная директория определяется так:
+  - Если передана ровно ОДНА папка-аргумент — результат кладётся в корень
+    этой папки.
+  - Если аргументов несколько или они не переданы — используется OUTPUT_DIR
+    (по умолчанию /home/smirnov/Documents/AI/Нулевой/Библия, можно
+    переопределить переменной окружения MERGE_OUTPUT_DIR).
+Файлы внутри выходной директории из выборки исключаются.
 
 Кодировки:
   - Входные файлы читаются с автоопределением: сначала UTF-8 (в т.ч. с BOM),
@@ -26,8 +31,10 @@
 Исключает из выборки:
   - Папки и файлы, начинающиеся с "_"
   - Файлы и папки, содержащие "draft" в названии (без учёта регистра)
-  - Пути и файлы внутри выходной директории (чтобы не подхватить
-    собственные bibl-*.md от предыдущих запусков)
+  - Пути строго внутри выходной директории и выходные файлы bibl-*.md
+    из её корня (чтобы не подхватить результаты предыдущих запусков;
+    при этом сама папка-аргумент, являющаяся выходной директорией,
+    сканируется нормально)
 
 Если в папке есть файлы filename.md и filename_(datetime).md,
 то приоритет отдаётся файлу с datetime в имени (выбирается самый свежий).
@@ -262,23 +269,47 @@ def merge_files(files: list[Path], output_path: Path) -> None:
                 print(f"  ❌ Ошибка чтения: {filepath} — {e}")
 
 
-def is_under_output_dir(path: Path) -> bool:
-    """Проверяет, находится ли путь внутри выходной директории (или совпадает с ней)."""
+def is_under_output_dir(path: Path, output_dir: Path | None = None) -> bool:
+    """
+    Проверяет, находится ли путь СТРОГО внутри выходной директории.
+    Сама выходная директория (совпадающий путь) возвращает False — иначе при
+    выводе результата в корень папки-аргумента эта папка ошибочно исключалась
+    бы из выборки.
+    """
+    out_dir = OUTPUT_DIR if output_dir is None else output_dir
     try:
-        path.resolve().relative_to(OUTPUT_DIR.resolve())
-        return True
+        p, o = path.resolve(), out_dir.resolve()
+        return p != o and o in p.parents
+    except OSError:
+        return False
+
+
+def is_output_file(path: Path, output_dir: Path | None = None) -> bool:
+    """Проверяет, является ли файл результатом предыдущих запусков (bibl-*.md в корне выходной директории)."""
+    out_dir = OUTPUT_DIR if output_dir is None else output_dir
+    try:
+        rel = path.resolve().relative_to(out_dir.resolve())
     except (ValueError, OSError):
         return False
+    return len(rel.parts) == 1 and rel.name.startswith("bibl-") and rel.suffix == ".md"
 
 
 def main():
     search_paths = get_search_paths()
 
+    # Если передана ровно одна папка-аргумент — результат кладётся в её корень.
+    # Иначе используется OUTPUT_DIR (MERGE_OUTPUT_DIR или путь по умолчанию).
+    args_provided = bool([a for a in sys.argv[1:] if a.strip()])
+    if args_provided and len(search_paths) == 1:
+        output_dir = search_paths[0]
+    else:
+        output_dir = OUTPUT_DIR
+
     # Выходная директория может находиться внутри одной из папок поиска —
     # исключаем такие пути, чтобы не подхватить собственные bibl-*.md файлы
     filtered_paths = []
     for p in search_paths:
-        if is_under_output_dir(p):
+        if is_under_output_dir(p, output_dir):
             print(f"⏭️  Пропуск пути (внутри выходной директории): {p}")
         else:
             filtered_paths.append(p)
@@ -291,7 +322,7 @@ def main():
 
     for search_path in search_paths:
         print(f"\n📂 Сканирование: {search_path}")
-        files = [f for f in find_md_files(search_path) if not is_under_output_dir(f)]
+        files = [f for f in find_md_files(search_path) if not is_output_file(f, output_dir)]
         print(f"   Найдено файлов: {len(files)}")
         for f in files:
             print(f"   📄 {f.relative_to(search_path)}")
@@ -328,12 +359,12 @@ def main():
         print(f"   🗑️  Пропущено (устаревшие версии): {skipped_count}")
 
     # Создаём директорию для вывода
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # Формируем имя выходного файла с датой и временем
     datetime_str = datetime.now().strftime("%Y%m%d-%H%M%S")
     output_filename = f"bibl-{datetime_str}.md"
-    output_path = OUTPUT_DIR / output_filename
+    output_path = output_dir / output_filename
 
     print(f"\n📝 Объединение файлов...")
     print(f"📁 Выходной файл: {output_path}")
