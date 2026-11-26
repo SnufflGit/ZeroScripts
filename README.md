@@ -13,6 +13,9 @@ Python Script for Merging TXT Files
 # С указанием папок с исходными файлами (позиционные аргументы, без ключей):
 python3 public/merge_txt.py /path/to/Референсы /path/to/Novells
 
+# Справка по запуску:
+python3 public/merge_txt.py --help   # или -h
+
 # Без аргументов — используются пути по умолчанию:
 python3 public/merge_txt.py
 ```

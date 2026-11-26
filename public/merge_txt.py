@@ -3,9 +3,10 @@
 Скрипт для объединения всех .md файлов из подпапок в единый файл.
 
 Запуск:
-  python merge_txt.py [папка1 папка2 ...]
+  python merge_txt.py [--help] [папка1 папка2 ...]
 Пути к папкам с исходными файлами передаются позиционными аргументами
-(без ключей). Если аргументы не переданы, используются пути по умолчанию:
+(без ключей). Флаг --help (-h) печатает справку и выходит.
+Если аргументы не переданы, используются пути по умолчанию:
   - /home/smirnov/Documents/AI/Нулевой/Референсы
   - /home/smirnov/Documents/AI/Нулевой/Novells
 
@@ -55,6 +56,7 @@
 import sys
 import os
 import re
+import argparse
 from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
@@ -93,9 +95,40 @@ DEFAULT_SEARCH_PATHS = [
 ]
 
 
-def get_search_paths() -> list[Path]:
-    """Возвращает пути для поиска: из аргументов командной строки или по умолчанию."""
-    args = [a.strip() for a in sys.argv[1:] if a.strip()]
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Создаёт парсер аргументов командной строки (поддержка --help)."""
+    parser = argparse.ArgumentParser(
+        prog="merge_txt.py",
+        description=(
+            "Объединяет все .md файлы из подпапок указанных директорий "
+            "в единый файл bibl-[YYYYMMDD-HHMMSS].md."
+        ),
+        epilog=(
+            "Если папки не указаны, используются пути по умолчанию: "
+            + ", ".join(str(p) for p in DEFAULT_SEARCH_PATHS)
+            + ". Если передана ровно одна папка, результат кладётся в её корень; "
+            "иначе — в выходную директорию (переменная окружения MERGE_OUTPUT_DIR "
+            "или путь по умолчанию). Входные файлы читаются в UTF-8 (в т.ч. с BOM) "
+            "или cp1251, результат всегда записывается в UTF-8."
+        ),
+    )
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        metavar="ПАПКА",
+        help="пути к папкам с исходными .md файлами (без ключей, можно несколько)",
+    )
+    return parser
+
+
+def get_search_paths(argv: list[str] | None = None) -> list[Path]:
+    """
+    Возвращает пути для поиска: из аргументов командной строки или по умолчанию.
+    Флаг --help печатает справку и завершает программу (exit 0).
+    """
+    argv = sys.argv[1:] if argv is None else argv
+    raw_paths = build_arg_parser().parse_args(argv).paths
+    args = [a.strip() for a in raw_paths if a.strip()]
     if args:
         return [Path(a) for a in args]
     return DEFAULT_SEARCH_PATHS
@@ -299,7 +332,7 @@ def main():
 
     # Если передана ровно одна папка-аргумент — результат кладётся в её корень.
     # Иначе используется OUTPUT_DIR (MERGE_OUTPUT_DIR или путь по умолчанию).
-    args_provided = bool([a for a in sys.argv[1:] if a.strip()])
+    args_provided = bool(build_arg_parser().parse_args(sys.argv[1:]).paths)
     if args_provided and len(search_paths) == 1:
         output_dir = search_paths[0]
     else:
