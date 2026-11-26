@@ -42,7 +42,7 @@ DEFAULT_SEARCH_PATHS = [
 
 def get_search_paths() -> list[Path]:
     """Возвращает пути для поиска: из аргументов командной строки или по умолчанию."""
-    args = [a for a in sys.argv[1:] if a.strip()]
+    args = [a.strip() for a in sys.argv[1:] if a.strip()]
     if args:
         return [Path(a) for a in args]
     return DEFAULT_SEARCH_PATHS
@@ -212,8 +212,27 @@ def merge_files(files: list[Path], output_path: Path) -> None:
                 print(f"  ❌ Ошибка чтения: {filepath} — {e}")
 
 
+def is_under_output_dir(path: Path) -> bool:
+    """Проверяет, находится ли путь внутри выходной директории (или совпадает с ней)."""
+    try:
+        path.resolve().relative_to(OUTPUT_DIR.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
 def main():
     search_paths = get_search_paths()
+
+    # Выходная директория может находиться внутри одной из папок поиска —
+    # исключаем такие пути, чтобы не подхватить собственные bibl-*.md файлы
+    filtered_paths = []
+    for p in search_paths:
+        if is_under_output_dir(p):
+            print(f"⏭️  Пропуск пути (внутри выходной директории): {p}")
+        else:
+            filtered_paths.append(p)
+    search_paths = filtered_paths
 
     print("🔍 Поиск .md файлов...")
     print("=" * 50)
@@ -222,7 +241,7 @@ def main():
 
     for search_path in search_paths:
         print(f"\n📂 Сканирование: {search_path}")
-        files = find_md_files(search_path)
+        files = [f for f in find_md_files(search_path) if not is_under_output_dir(f)]
         print(f"   Найдено файлов: {len(files)}")
         for f in files:
             print(f"   📄 {f.relative_to(search_path)}")
