@@ -18,13 +18,24 @@
 Поддерживаемые форматы datetime в имени файла:
   - Вечер_(04:13_03.11.2026).md       → HH:MM_DD.MM.YYYY в скобках
   - Вечер_(04:13 03.11.2026).md       → HH:MM DD.MM.YYYY в скобках
+  - Вечер (04:13 03.11.2026).md       → пробел перед скобкой, HH:MM DD.MM.YYYY
+  - Вечер (04:13_03.11.2026).md       → пробел перед скобкой, HH:MM_DD.MM.YYYY
+  - Вечер (03.11.2026).md             → пробел перед скобкой, только дата
   - filename-20240115-143022.md       → YYYYMMDD-HHMMSS
   - filename-20240115.md              → YYYYMMDD
   - filename-2024-01-15.md            → YYYY-MM-DD
+  - filename_2024-01-15.md            → _YYYY-MM-DD (через подчёркивание)
+  - filename_20240115.md              → _YYYYMMDD   (через подчёркивание)
+
+Защита от симлинков:
+  - Базовые директории из SEARCH_PATHS, являющиеся симлинками, пропускаются.
+  - Симлинки на .md файлы и симлинк-директории внутри поиска игнорируются
+    (защита от циклов и чтения за пределами разрешённых путей).
 """
 
 import os
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
@@ -60,6 +71,17 @@ DATETIME_PATTERNS = [
     (re.compile(r"^(.+)-(\d{8})$"), "%Y%m%d"),
     # YYYY-MM-DD
     (re.compile(r"^(.+)-(\d{4}-\d{2}-\d{2})$"), "%Y-%m-%d"),
+    # НОВЫЕ ФОРМАТЫ:
+    # Вариант с пробелом перед скобкой: name (HH:MM DD.MM.YYYY) — например: Вечер (04:13 03.11.2026)
+    (re.compile(r"^(.+?) \((\d{2}:\d{2} \d{2}\.\d{2}\.\d{4})\)$"), "%H:%M %d.%m.%Y"),
+    # Вариант с пробелом перед скобкой и "_" внутри: name (HH:MM_DD.MM.YYYY)
+    (re.compile(r"^(.+?) \((\d{2}:\d{2}_\d{2}\.\d{2}\.\d{4})\)$"), "%H:%M_%d.%m.%Y"),
+    # Вариант с пробелом перед скобкой, только дата: name (DD.MM.YYYY)
+    (re.compile(r"^(.+?) \((\d{2}\.\d{2}\.\d{4})\)$"), "%d.%m.%Y"),
+    # Суффикс через "_": filename_YYYY-MM-DD — например: Вечер_2026-11-03
+    (re.compile(r"^(.+)_(\d{4}-\d{2}-\d{2})$"), "%Y-%m-%d"),
+    # Суффикс через "_": filename_YYYYMMDD — например: Вечер_20261103
+    (re.compile(r"^(.+)_(\d{8})$"), "%Y%m%d"),
 ]
 
 
@@ -102,13 +124,41 @@ def parse_datetime_from_filename(filename: str) -> tuple[str, datetime | None]:
 
 
 def find_md_files(base_path: Path) -> list[Path]:
-    """Рекурсивно находит все .md файлы в подпапках указанной директории."""
+    """Рекурсивно находит все .md файлы в подпапках указанной директории.
+
+    Защита от симлинков:
+      - Сама базовая директория не должна быть симлинком.
+      - Симлинки на файлы и директории игнорируются (не читаются и не обходятся),
+        чтобы избежать циклов и чтения за пределами SEARCH_PATHS.
+    """
     if not base_path.exists():
         print(f"⚠️  Директория не найдена: {base_path}")
         return []
 
-    all_md_files = list(base_path.rglob("*.md"))
-    
+    # Защита от симлинков: базовая директория не должна быть symlink'ом
+    if base_path.is_symlink():
+        print(f"🚫 Пропущено (symlink): {base_path}")
+        return []
+
+    all_md_files = []
+    symlink_count = 0
+    for filepath in base_path.rglob("*.md"):
+        # Пропускаем симлинки на файлы
+        if filepath.is_symlink():
+            symlink_count += 1
+            continue
+        # Пропускаем файлы, у которых любой родительский компонент — симлинк
+        # (rglob с followlinks=False по умолчанию всё равно может возвращать их
+        #  в некоторых версиях Python / на некоторых ОС — перестраховываемся)
+        rel_path = filepath.relative_to(base_path)
+        if any((base_path / part).is_symlink() for part in rel_path.parents if part != Path(".")):
+            symlink_count += 1
+            continue
+        all_md_files.append(filepath)
+
+    if symlink_count > 0:
+        print(f"   🔗 Пропущено симлинков: {symlink_count}")
+
     # Фильтрация: исключаем файлы из папок с "_" или "draft"
     filtered_files = []
     excluded_count = 0
